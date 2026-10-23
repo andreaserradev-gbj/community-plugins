@@ -8,10 +8,6 @@
 
 local panelOpen = false
 
-local recordState = noctalia.state.get("recordState") or "idle"
-local recordFormat = noctalia.state.get("recordFormat") or "mp4"
-local recordInfo = noctalia.state.get("recordInfo")
-local saveContainerIndex = 0
 local activeTool = noctalia.state.get("activeTool")
 local colorResult = noctalia.state.get("colorResult")
 local colorHistory = noctalia.state.get("colorHistory") or {}
@@ -138,9 +134,6 @@ local function showHistoryColor(hex)
 end
 
 local function refresh()
-  recordState = noctalia.state.get("recordState") or "idle"
-  recordFormat = noctalia.state.get("recordFormat") or "mp4"
-  recordInfo = noctalia.state.get("recordInfo")
   activeTool = noctalia.state.get("activeTool")
   colorResult = noctalia.state.get("colorResult")
   colorHistory = noctalia.state.get("colorHistory") or {}
@@ -156,9 +149,7 @@ end
 
 local function header()
   local title, glyph = tr("panel.title"), "crosshair"
-  if recordState == "ready" then
-    title, glyph = tr("panel.ready"), "video"
-  elseif activeTool == "colorpicker" then
+  if activeTool == "colorpicker" then
     title, glyph = tr("tools.colorpicker"), "palette"
   elseif activeTool == "ocr" then
     title, glyph = tr("tools.ocr"), "scan"
@@ -167,9 +158,8 @@ local function header()
   elseif activeTool == "palette" then
     title, glyph = tr("tools.palette"), "color-swatch"
   end
-  -- Clear sits top-right in every state, matching the other dialogs. What it
-  -- clears differs: a finished recording has a raw file to drop
-  -- (recordDiscard), everything else just drops the result.
+  -- Clear sits top-right in every state, matching the other dialogs: it drops
+  -- the shown result.
   return ui.row({ align = "center", gap = 10 }, {
     ui.column({ width = 36, height = 36, radius = 10, fill = "primary/0.15", align = "center", justify = "center" }, {
       ui.glyph({ name = glyph, size = 18, color = "primary" }),
@@ -182,115 +172,13 @@ local function header()
       controlSize = "sm",
       tooltip = tr("panel.clear"),
       onClick = function()
-        if recordState == "ready" then send("recordDiscard") else send("clearResult") end
+        send("clearResult")
         panel.close()
       end,
     }),
     ui.button({
       glyph = "close", variant = "ghost", controlSize = "sm", onClick = function() panel.close() end,
     }),
-  })
-end
-
--- Recording finished: preview the thumbnail, recording info, then save or
--- play. The format (GIF / MP4) was chosen from the main panel when the
--- recording started; a video can still be finalized as MP4 or MOV. Clear sits
--- in the header with the other dialogs' Clear, not down here.
-local RECORD_THUMB_PATH = "/tmp/screen-toolkit-record-thumb.png"
-
-local function fmtBytes(bytes)
-  if bytes >= 1048576 then
-    return string.format("%.1f MB", bytes / 1048576)
-  end
-  return string.format("%.0f KB", bytes / 1024)
-end
-
-local function fmtDuration(seconds)
-  seconds = math.floor(seconds + 0.5)
-  local h = math.floor(seconds / 3600)
-  local m = math.floor((seconds % 3600) / 60)
-  local s = seconds % 60
-  if h > 0 then return string.format("%d:%02d:%02d", h, m, s) end
-  return string.format("%d:%02d", m, s)
-end
-
-local function fmtRatio(w, h)
-  if not w or not h or w <= 0 or h <= 0 then return "—" end
-  local a, b = w, h
-  while b ~= 0 do a, b = b, a % b end
-  return string.format("%d:%d", w / a, h / a)
-end
-
-local function infoTile(label, value)
-  return ui.column({ flexGrow = 1, gap = 2, align = "center", paddingH = 6, paddingV = 8, radius = 10, fill = "surface_variant/0.25" }, {
-    ui.label({ text = label, fontSize = 10, color = "on_surface_variant" }),
-    ui.label({ text = value or "—", fontSize = 13, fontWeight = "bold" }),
-  })
-end
-
-local function recordSaveCard()
-  local isGif = recordFormat == "gif"
-  local info = recordInfo or {}
-  local actions = {}
-  -- Format control on the left, actions flush right — the same shape every
-  -- other result dialog uses, and the one the GIF recording already had.
-  if isGif then
-    table.insert(actions, ui.label({
-      text = tr("tools.record_gif"),
-      fontSize = 12,
-      color = "on_surface_variant",
-    }))
-  else
-    table.insert(actions, ui.select({
-      options = { "MP4", "MOV" },
-      selectedIndex = saveContainerIndex,
-      controlSize = "sm",
-      width = 96,
-      onChange = function(value)
-        saveContainerIndex = tonumber(value) or 0
-      end,
-    }))
-  end
-  table.insert(actions, ui.spacer({ flexGrow = 1 }))
-  table.insert(actions, actionButton("download", tr("panel.save"), function()
-    if isGif then
-      send("recordSave")
-    else
-      send("recordSave", { format = saveContainerIndex == 0 and "mp4" or "mov" })
-    end
-  end, "primary"))
-  -- The preview plays the unsaved raw file, not the finalized destination,
-  -- because finalize has not run yet at this point. `onClick` on the thumbnail
-  -- is the whole-image hit target (no overlay primitive exists to draw a badge
-  -- on top of it), and the button is the discoverable equivalent.
-  table.insert(actions, actionButton("player-play", tr("panel.play"), function()
-    send("recordPreview")
-  end, "secondary"))
-  return ui.column({ flexGrow = 1, gap = 10, paddingV = 22 }, {
-    -- The panel height is fixed in the manifest and this column packs from
-    -- the top, so the image is the one node whose height decides where the
-    -- action row lands. Its value is what the 16:9 picture needs at the
-    -- content width, so the border hugs the picture rather than boxing a
-    -- letterbox; the margin above the header and below the action row comes
-    -- from paddingV above, not from inflating this frame. `fit = "contain"`
-    -- still matters for other aspect ratios, and `flexGrow` is not a
-    -- substitute — an image with no explicit height has no intrinsic size to
-    -- rasterize at and drops out of the tree entirely.
-    ui.image({
-      path = RECORD_THUMB_PATH,
-      height = 299,
-      fit = "contain",
-      radius = 12,
-      borderWidth = 1,
-      border = "outline",
-      onClick = function() send("recordPreview") end,
-    }),
-    ui.row({ gap = 8 }, {
-      infoTile(tr("panel.record_size"), fmtBytes(info.size or 0)),
-      infoTile(tr("panel.record_duration"), fmtDuration(info.duration or 0)),
-      infoTile(tr("panel.record_ratio"), fmtRatio(info.width, info.height)),
-    }),
-    ui.row({ gap = 6, align = "center" }, actions),
   })
 end
 
@@ -565,9 +453,7 @@ end
 -- ── Render ─────────────────────────────────────────────────────────────────
 
 local function body()
-  if recordState == "ready" then
-    return recordSaveCard()
-  elseif activeTool == "colorpicker" then
+  if activeTool == "colorpicker" then
     return renderColor()
   elseif activeTool == "ocr" then
     return renderOcr()
@@ -598,16 +484,6 @@ function onClose()
   panelOpen = false
 end
 
-noctalia.state.watch("recordState", function(v)
-  if recordState == "ready" and v ~= "ready" then
-    panel.close()
-    return
-  end
-  recordState = v or "idle"
-  if panelOpen then render() end
-end)
-noctalia.state.watch("recordFormat", function(v) recordFormat = v or "mp4"; if panelOpen then render() end end)
-noctalia.state.watch("recordInfo", function(v) recordInfo = v; if panelOpen then render() end end)
 noctalia.state.watch("activeTool", function(v) activeTool = v; if panelOpen then render() end end)
 noctalia.state.watch("colorResult", function(v) colorResult = v; if panelOpen then render() end end)
 noctalia.state.watch("colorHistory", function(v) colorHistory = v or {}; if panelOpen then render() end end)

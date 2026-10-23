@@ -23,6 +23,11 @@
 local PANEL_ID = "alexander/screen-toolkit:panel"
 local LEGACY_PANEL_ID = "alexander/screen-toolkit:panel-legacy"
 local RESULT_PANEL_ID = "alexander/screen-toolkit:result"
+-- The recording save card is its own panel entry so its manifest can opt out
+-- of outside-click dismissal: a pending recording is a destructive choice, and
+-- a stray click must never dismiss the card. The host shows one panel at a
+-- time, so opening this replaces any open tool-result panel.
+local RECORD_RESULT_PANEL_ID = "alexander/screen-toolkit:record-result"
 
 local SCRIPT_CAPTURE = noctalia.pluginDir() .. "/scripts/capture.sh"
 local SCRIPT_SHELL = noctalia.pluginDir() .. "/scripts/shell-capture.sh"
@@ -966,7 +971,7 @@ local function recordStop()
                 local size = trim(statRes.stdout or "")
                 publish("recordInfo", parseRecordInfo(`{duration}|{wh}|{size}`))
                 setRecordState("ready")
-                noctalia.togglePanel(RESULT_PANEL_ID)
+                noctalia.togglePanel(RECORD_RESULT_PANEL_ID)
               end)
             end)
           end)
