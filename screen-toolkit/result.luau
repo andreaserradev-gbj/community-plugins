@@ -167,6 +167,9 @@ local function header()
   elseif activeTool == "palette" then
     title, glyph = tr("tools.palette"), "color-swatch"
   end
+  -- Clear sits top-right in every state, matching the other dialogs. What it
+  -- clears differs: a finished recording has a raw file to drop
+  -- (recordDiscard), everything else just drops the result.
   return ui.row({ align = "center", gap = 10 }, {
     ui.column({ width = 36, height = 36, radius = 10, fill = "primary/0.15", align = "center", justify = "center" }, {
       ui.glyph({ name = glyph, size = 18, color = "primary" }),
@@ -183,13 +186,16 @@ local function header()
         panel.close()
       end,
     }),
-    ui.button({ glyph = "close", variant = "ghost", controlSize = "sm", onClick = function() panel.close() end }),
+    ui.button({
+      glyph = "close", variant = "ghost", controlSize = "sm", onClick = function() panel.close() end,
+    }),
   })
 end
 
 -- Recording finished: preview the thumbnail, recording info, then save or
--- discard. The format (GIF / MP4) was chosen from the main panel when the
--- recording started; a video can still be finalized as MP4 or MOV.
+-- play. The format (GIF / MP4) was chosen from the main panel when the
+-- recording started; a video can still be finalized as MP4 or MOV. Clear sits
+-- in the header with the other dialogs' Clear, not down here.
 local RECORD_THUMB_PATH = "/tmp/screen-toolkit-record-thumb.png"
 
 local function fmtBytes(bytes)
@@ -226,10 +232,11 @@ local function recordSaveCard()
   local isGif = recordFormat == "gif"
   local info = recordInfo or {}
   local actions = {}
+  -- Format control on the left, actions flush right — the same shape every
+  -- other result dialog uses, and the one the GIF recording already had.
   if isGif then
     table.insert(actions, ui.label({
       text = tr("tools.record_gif"),
-      flexGrow = 1,
       fontSize = 12,
       color = "on_surface_variant",
     }))
@@ -244,6 +251,7 @@ local function recordSaveCard()
       end,
     }))
   end
+  table.insert(actions, ui.spacer({ flexGrow = 1 }))
   table.insert(actions, actionButton("download", tr("panel.save"), function()
     if isGif then
       send("recordSave")
@@ -251,11 +259,32 @@ local function recordSaveCard()
       send("recordSave", { format = saveContainerIndex == 0 and "mp4" or "mov" })
     end
   end, "primary"))
-  table.insert(actions, actionButton("trash", tr("panel.discard"), function()
-    send("recordDiscard")
-  end, "ghost"))
-  return ui.column({ flexGrow = 1, gap = 10 }, {
-    ui.image({ path = RECORD_THUMB_PATH, height = 220, fit = "contain", radius = 12, borderWidth = 1, border = "outline" }),
+  -- The preview plays the unsaved raw file, not the finalized destination,
+  -- because finalize has not run yet at this point. `onClick` on the thumbnail
+  -- is the whole-image hit target (no overlay primitive exists to draw a badge
+  -- on top of it), and the button is the discoverable equivalent.
+  table.insert(actions, actionButton("player-play", tr("panel.play"), function()
+    send("recordPreview")
+  end, "secondary"))
+  return ui.column({ flexGrow = 1, gap = 10, paddingV = 22 }, {
+    -- The panel height is fixed in the manifest and this column packs from
+    -- the top, so the image is the one node whose height decides where the
+    -- action row lands. Its value is what the 16:9 picture needs at the
+    -- content width, so the border hugs the picture rather than boxing a
+    -- letterbox; the margin above the header and below the action row comes
+    -- from paddingV above, not from inflating this frame. `fit = "contain"`
+    -- still matters for other aspect ratios, and `flexGrow` is not a
+    -- substitute — an image with no explicit height has no intrinsic size to
+    -- rasterize at and drops out of the tree entirely.
+    ui.image({
+      path = RECORD_THUMB_PATH,
+      height = 299,
+      fit = "contain",
+      radius = 12,
+      borderWidth = 1,
+      border = "outline",
+      onClick = function() send("recordPreview") end,
+    }),
     ui.row({ gap = 8 }, {
       infoTile(tr("panel.record_size"), fmtBytes(info.size or 0)),
       infoTile(tr("panel.record_duration"), fmtDuration(info.duration or 0)),
@@ -307,6 +336,11 @@ local function renderColor()
     return emptyState("palette", tr("panel.no_color"))
   end
   local c = colorResult
+  -- The panel height is fixed in the manifest and this view is taller than
+  -- it, so everything past the header has to scroll: without the scroll the
+  -- tail (the history row) is cut off by the panel's bottom edge, which reads
+  -- as a broken dialog rather than as content below the fold. The header row
+  -- stays outside so the swatch and Pick again are always reachable.
   return ui.column({ flexGrow = 1, gap = 10 }, {
     ui.row({ gap = 12, align = "center" }, {
       ui.box({ key = "swatch", width = 76, height = 50, radius = 12, fill = c.hex, borderWidth = 2, border = "outline" }),
@@ -316,7 +350,6 @@ local function renderColor()
       }),
       ui.column({ align = "end", gap = 4 }, {
         actionButton("color-picker", tr("panel.pick_again"), function() send("colorPicker"); panel.close() end),
-        actionButton("trash", tr("panel.clear"), function() send("clearResult"); panel.close() end, "ghost"),
       }),
     }),
     ui.row({ gap = 6 }, {
@@ -325,18 +358,19 @@ local function renderColor()
       end),
       actionButton("share", tr("panel.share"), function() send("share", c.capturePath) end),
     }),
-    ui.separator({ spacing = 4 }),
-    colorFormatRow("HEX", c.hex),
-    colorFormatRow("RGB", c.rgb),
-    colorFormatRow("HSL", c.hsl),
-    colorFormatRow("HSV", c.hsv),
-    ui.separator({ spacing = 4 }),
-    ui.column({ gap = 6 }, {
-      ui.row({ align = "center", justify = "space_between", gap = 8 }, {
-        ui.label({ text = tr("panel.history"), fontSize = 12, fontWeight = "bold", color = "on_surface_variant" }),
-        ui.button({ text = tr("panel.clear_history"), controlSize = "sm", variant = "ghost", onClick = function() send("clearHistory") end }),
+    ui.scroll({ flexGrow = 1, gap = 10 }, {
+      colorFormatRow("HEX", c.hex),
+      colorFormatRow("RGB", c.rgb),
+      colorFormatRow("HSL", c.hsl),
+      colorFormatRow("HSV", c.hsv),
+      ui.separator({ spacing = 4 }),
+      ui.column({ gap = 6 }, {
+        ui.row({ align = "center", justify = "space_between", gap = 8 }, {
+          ui.label({ text = tr("panel.history"), fontSize = 12, fontWeight = "bold", color = "on_surface_variant" }),
+          ui.button({ text = tr("panel.clear_history"), controlSize = "sm", variant = "ghost", onClick = function() send("clearHistory") end }),
+        }),
+        colorHistoryRow(),
       }),
-      colorHistoryRow(),
     }),
   })
 end
@@ -354,14 +388,18 @@ local function renderOcr()
   local email = text:match("[%w%._%%+%-]+@[%w%.%-]+%.[%a][%a]+")
   local imgW = tonumber(ocrResult.gw) or 0
   local imgH = tonumber(ocrResult.gh) or 0
+  -- Caps chosen so the usual case (image card + a few lines of text) fits the
+  -- fixed panel height and no scrollbar appears at all: the scroll area is
+  -- about 406 tall and the non-editor rows take 76, so image + input must stay
+  -- under ~330. Longer text still scrolls, which is the scroll's job.
   local imgHeight = 90
   if imgW > 0 and imgH > 0 then
-    imgHeight = math.max(70, math.min(140, math.floor(360 * (imgH / imgW))))
+    imgHeight = math.max(70, math.min(130, math.floor(360 * (imgH / imgW))))
   end
   local lineCount = 1
   for _ in tostring(text):gmatch("\n") do lineCount = lineCount + 1 end
   lineCount = lineCount + math.floor(#text / 60)
-  local inputHeight = math.max(70, math.min(180, lineCount * 20 + 32))
+  local inputHeight = math.max(70, math.min(160, lineCount * 20 + 32))
   local hasTranslation = translateResult and translateResult ~= ""
   if hasTranslation and ocrTab ~= "original" and ocrTab ~= "translation" then ocrTab = "original" end
   local scrollChildren = {}
