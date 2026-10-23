@@ -16,7 +16,7 @@ not the original implementation.
 | Field | Value |
 | --- | --- |
 | ID | `alexander/screen-toolkit` |
-| Entries | Bar widget: `widget`; control-center shortcut: `toggle`; panels: `panel` (standard tools), `panel-legacy` (legacy layout), `result` (result view); service: `service` |
+| Entries | Bar widget: `widget`; control-center shortcut: `toggle`; panels: `panel` (standard tools), `panel-legacy` (legacy layout), `result` (result view), `record-result` (recording save card); service: `service` |
 
 ## Requirements
 
@@ -112,6 +112,14 @@ Open the result panel (shows the last capture/recording output):
 
 ```sh
 noctalia msg panel-toggle alexander/screen-toolkit:result
+```
+
+Open the recording save card (shown automatically when a recording stops with
+"Skip Save Confirmation" off; unlike the other dialogs it ignores clicks
+outside it, so a stray click cannot dismiss a pending recording):
+
+```sh
+noctalia msg panel-toggle alexander/screen-toolkit:record-result
 ```
 
 The tools panel contains the capture actions. When a capture tool finishes, a
